@@ -1,0 +1,9 @@
+opencv-python==4.10.0.84
+ultralytics==8.3.0
+insightface==0.7.3
+onnxruntime-gpu==1.19.0
+numpy==1.26.4
+requests==2.32.3
+python-dotenv==1.0.1
+pydantic==2.9.2
+pydantic-settings==2.5.2
