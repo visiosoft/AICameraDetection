@@ -77,6 +77,16 @@ class Settings(BaseSettings):
             return "false"
         return "auto"
 
+    @field_validator("db_path")
+    @classmethod
+    def _resolve_db_path(cls, v: str) -> str:
+        """Convert relative db_path to absolute path relative to this config file."""
+        if os.path.isabs(v):
+            return v
+        # Resolve relative to the directory containing config.py (ai-service/)
+        config_dir = os.path.dirname(os.path.abspath(__file__))
+        return os.path.abspath(os.path.join(config_dir, v))
+
 
 settings = Settings()
 

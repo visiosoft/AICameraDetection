@@ -96,10 +96,19 @@ def main() -> int:
     stream.start()
 
     logger.info("Processing started")
+    print(f"\n{'='*60}")
+    print(f"Face Recognition Service Running")
+    print(f"{'='*60}")
+    print(f"Video stream: {settings.rtsp_url}")
+    print(f"Enrolled users: {len(employees)}")
+    print(f"Recognition threshold: {settings.recognition_threshold}")
+    print(f"Detection confidence: {settings.detection_confidence}")
+    print(f"{'='*60}\n")
 
     frame_counter = 0
     fps_window_start = time.monotonic()
     fps_frames = 0
+    last_heartbeat = 0
 
     try:
         while not stop_event.is_set():
@@ -111,6 +120,11 @@ def main() -> int:
             frame_counter += 1
             fps_frames += 1
 
+            # Heartbeat to show system is running
+            if frame_counter - last_heartbeat >= 100:
+                print(f"[Heartbeat] Processed {frame_counter} frames, system running...")
+                last_heartbeat = frame_counter
+
             if frame_counter % settings.frame_skip != 0:
                 if settings.debug:
                     cv2.imshow(WINDOW_NAME, frame)
@@ -121,44 +135,41 @@ def main() -> int:
             detections = detector.detect(frame)
             tracks = tracker.update(detections)
 
+            # Show detection/tracking status
+            if len(detections) > 0:
+                print(f"[Frame {frame_counter}] Detected {len(detections)} face(s), tracking {len(tracks)}")
+
             recognized_this_frame = 0
+            unknown_this_frame = 0
             for t in tracks:
                 if not tracker.needs_recognition(t):
                     continue
-                logger.debug(
-                    "Track %d stable for %d frames, recognizing...",
-                    t.track_id,
-                    t.hits,
-                )
+                print(f"  → Recognizing track {t.track_id} (stable for {t.hits} frames)...")
                 emb = recognizer.embed(frame, t.bbox)
                 t.stable_recognized = True
                 if emb is None:
+                    print(f"  ✗ Failed to extract face embedding for track {t.track_id}")
                     continue
                 match = recognizer.match(
                     emb, employees, settings.recognition_threshold
                 )
                 if match is None:
+                    unknown_this_frame += 1
+                    print(f"  ✗ Unknown person (no match in database)")
                     continue
                 t.recognized_employee_id = match.employee_id
                 t.recognized_name = match.name
                 t.recognized_conf = match.score
                 recognized_this_frame += 1
-                logger.debug(
-                    "Match: %s confidence %.2f", match.employee_id, match.score
-                )
+                # Console output only for enrolled users
+                print(f"  ✓ {match.name} detected (ID: {match.employee_id}, confidence: {match.score:.2f})")
                 publisher.publish(
                     employee_id=match.employee_id,
                     name=match.name,
                     confidence=match.score,
                 )
 
-            logger.debug(
-                "Frame %d - %d face%s detected, %d tracked",
-                frame_counter,
-                len(detections),
-                "" if len(detections) == 1 else "s",
-                len(tracks),
-            )
+
 
             if settings.debug:
                 _draw_overlay(frame, tracks)

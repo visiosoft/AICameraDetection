@@ -12,10 +12,10 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_URL = (
-    "https://github.com/akanametov/yolov8-face/releases/download/v0.0.0/"
-    "yolov8n-face.pt"
+    "https://github.com/akanametov/yolo-face/releases/download/1.0.0/"
+    "yolov10n-face.pt"
 )
-DEFAULT_MODEL_PATH = os.path.join("data", "models", "yolov8n-face.pt")
+DEFAULT_MODEL_PATH = os.path.join("data", "models", "yolov10n-face.pt")
 
 
 @dataclass
