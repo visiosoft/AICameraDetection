@@ -39,6 +39,7 @@ class Settings(BaseSettings):
     debug: bool = Field(default=False)
     cooldown_seconds: int = Field(default=60)
     use_gpu: Literal["auto", "true", "false"] = Field(default="auto")
+    recognition_buffer_size: int = Field(default=5)
 
     @field_validator("detection_confidence", "recognition_threshold")
     @classmethod
@@ -54,6 +55,11 @@ class Settings(BaseSettings):
     @classmethod
     def _cooldown_min(cls, v: int) -> int:
         return max(0, int(v))
+
+    @field_validator("recognition_buffer_size")
+    @classmethod
+    def _buffer_size_min(cls, v: int) -> int:
+        return max(1, int(v))
 
     @field_validator("log_level")
     @classmethod

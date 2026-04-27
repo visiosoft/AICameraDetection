@@ -15,6 +15,7 @@ import config  # noqa: F401  (sets OPENCV_FFMPEG_CAPTURE_OPTIONS before cv2 impo
 from config import resolve_gpu, settings, setup_logging
 
 import cv2
+import numpy as np
 
 from camera.stream import RTSPStream
 from database.embeddings import EmbeddingDB
@@ -26,6 +27,13 @@ from tracking.tracker import IoUTracker, Track
 logger = logging.getLogger("ai-service")
 
 WINDOW_NAME = "face-recognition (debug)"
+
+BUFFER_SIZE = settings.recognition_buffer_size
+
+
+def _l2_normalize(v: np.ndarray) -> np.ndarray:
+    n = np.linalg.norm(v)
+    return v / n if n > 1e-12 else v
 
 
 def _draw_overlay(frame, tracks: list[Track]) -> None:
@@ -103,6 +111,7 @@ def main() -> int:
     print(f"Enrolled users: {len(employees)}")
     print(f"Recognition threshold: {settings.recognition_threshold}")
     print(f"Detection confidence: {settings.detection_confidence}")
+    print(f"Embedding buffer: {BUFFER_SIZE} frames")
     print(f"{'='*60}\n")
 
     frame_counter = 0
@@ -144,25 +153,45 @@ def main() -> int:
             for t in tracks:
                 if not tracker.needs_recognition(t):
                     continue
-                print(f"  → Recognizing track {t.track_id} (stable for {t.hits} frames)...")
+
                 emb = recognizer.embed(frame, t.bbox)
-                t.stable_recognized = True
                 if emb is None:
-                    print(f"  ✗ Failed to extract face embedding for track {t.track_id}")
                     continue
-                match = recognizer.match(
-                    emb, employees, settings.recognition_threshold
+
+                # Collect embeddings into a rolling buffer
+                t.embedding_buffer.append(emb)
+                if len(t.embedding_buffer) > BUFFER_SIZE:
+                    t.embedding_buffer.pop(0)
+
+                buffered = len(t.embedding_buffer)
+                print(f"  → Track {t.track_id}: buffering {buffered}/{BUFFER_SIZE}")
+
+                if buffered < BUFFER_SIZE:
+                    continue  # wait for full buffer
+
+                # Average embeddings across frames for a stable representation
+                avg_emb = _l2_normalize(
+                    np.mean(np.stack(t.embedding_buffer, axis=0), axis=0).astype(np.float32)
                 )
+
+                match = recognizer.match(
+                    avg_emb, employees, settings.recognition_threshold
+                )
+
+                t.stable_recognized = True
                 if match is None:
                     unknown_this_frame += 1
-                    print(f"  ✗ Unknown person (no match in database)")
+                    print(f"  ✗ Unknown person (no match after {BUFFER_SIZE}-frame average)")
                     continue
+
                 t.recognized_employee_id = match.employee_id
                 t.recognized_name = match.name
                 t.recognized_conf = match.score
                 recognized_this_frame += 1
-                # Console output only for enrolled users
-                print(f"  ✓ {match.name} detected (ID: {match.employee_id}, confidence: {match.score:.2f})")
+                print(
+                    f"  ✓ {match.name} confirmed (ID: {match.employee_id}, "
+                    f"confidence: {match.score:.2f}, averaged {BUFFER_SIZE} frames)"
+                )
                 publisher.publish(
                     employee_id=match.employee_id,
                     name=match.name,

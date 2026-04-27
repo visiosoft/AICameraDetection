@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+import numpy as np
+
 from detection.detector import Detection
 
 
@@ -22,6 +24,7 @@ class Track:
     recognized_name: Optional[str] = None
     recognized_conf: float = 0.0
     last_event_ts: float = 0.0
+    embedding_buffer: List[np.ndarray] = field(default_factory=list)
 
 
 def _iou(a: BBox, b: BBox) -> float:
