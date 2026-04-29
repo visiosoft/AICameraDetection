@@ -6,10 +6,12 @@ against a local embedding DB, and POSTs attendance events to a webhook.
 from __future__ import annotations
 
 import logging
+import os
 import signal
 import sys
 import threading
 import time
+from datetime import datetime
 
 import config  # noqa: F401
 from config import resolve_gpu, settings, setup_logging
@@ -29,6 +31,26 @@ logger = logging.getLogger("ai-service")
 WINDOW_NAME = "face-recognition (debug)"
 
 BUFFER_SIZE = settings.recognition_buffer_size
+
+UNKNOWN_DIR = os.path.join("data", "unknown_faces")
+os.makedirs(UNKNOWN_DIR, exist_ok=True)
+UNKNOWN_COOLDOWN = 300  # seconds before same unknown is saved again
+UNKNOWN_SIMILARITY = 0.50  # cosine sim above this = same person
+
+_recent_unknowns: list[tuple[float, np.ndarray]] = []
+
+
+def _is_duplicate_unknown(avg_emb: np.ndarray) -> bool:
+    """Return True if a similar unknown was already saved recently."""
+    now = time.monotonic()
+    _recent_unknowns[:] = [
+        (t, e) for t, e in _recent_unknowns if now - t < UNKNOWN_COOLDOWN
+    ]
+    for _, prev_emb in _recent_unknowns:
+        if float(np.dot(avg_emb, prev_emb)) > UNKNOWN_SIMILARITY:
+            return True
+    _recent_unknowns.append((now, avg_emb))
+    return False
 
 
 def _l2_normalize(v: np.ndarray) -> np.ndarray:
@@ -189,6 +211,17 @@ def main() -> int:
                 t.stable_recognized = True
                 if match is None:
                     unknown_this_frame += 1
+                    if not _is_duplicate_unknown(avg_emb):
+                        x1, y1, x2, y2 = t.bbox
+                        face_crop = frame[y1:y2, x1:x2]
+                        if face_crop.size > 0:
+                            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            path = os.path.join(
+                                UNKNOWN_DIR,
+                                f"unknown_{ts}_track{t.track_id}.jpg",
+                            )
+                            cv2.imwrite(path, face_crop)
+                            print(f"  ? Unknown face saved: {path}")
                     continue
 
                 t.recognized_employee_id = match.employee_id
