@@ -17,6 +17,7 @@ class Track:
     track_id: int
     bbox: BBox
     conf: float
+    keypoints: Optional[np.ndarray] = None
     hits: int = 1
     misses: int = 0
     stable_recognized: bool = False
@@ -83,6 +84,7 @@ class IoUTracker:
             d = detections[di]
             t.bbox = d.bbox
             t.conf = d.conf
+            t.keypoints = d.keypoints
             t.hits += 1
             t.misses = 0
 
@@ -104,6 +106,7 @@ class IoUTracker:
                     track_id=self._next_id,
                     bbox=d.bbox,
                     conf=d.conf,
+                    keypoints=d.keypoints,
                 )
             )
             self._next_id += 1

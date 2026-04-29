@@ -1,18 +1,10 @@
-"""Application configuration.
-
-This module sets the OPENCV_FFMPEG_CAPTURE_OPTIONS environment variable at
-import time so it takes effect before any other module imports cv2. Always
-import config (or something that imports it) before importing cv2.
-"""
+"""Application configuration."""
 from __future__ import annotations
 
 import logging
 import os
 import sys
 from typing import Literal
-
-# Must be set BEFORE any cv2 import anywhere in the process.
-os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = "rtsp_transport;tcp"
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict

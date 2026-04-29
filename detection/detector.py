@@ -5,7 +5,7 @@ import logging
 import os
 import urllib.request
 from dataclasses import dataclass
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -22,6 +22,7 @@ DEFAULT_MODEL_PATH = os.path.join("data", "models", "yolov10n-face.pt")
 class Detection:
     bbox: Tuple[int, int, int, int]  # (x1, y1, x2, y2)
     conf: float
+    keypoints: Optional[np.ndarray] = None  # (5, 2) facial landmarks if available
 
 
 def ensure_model(path: str = DEFAULT_MODEL_PATH, url: str = DEFAULT_MODEL_URL) -> str:
@@ -91,13 +92,27 @@ class FaceDetector:
             return out
         xyxy = r.boxes.xyxy.cpu().numpy()
         confs = r.boxes.conf.cpu().numpy()
+
+        # Extract facial landmarks if the model provides them
+        kps_array = None
+        try:
+            if r.keypoints is not None:
+                kps_array = r.keypoints.xy.cpu().numpy()  # (N, 5, 2)
+        except (AttributeError, IndexError):
+            pass
+
         h, w = frame.shape[:2]
-        for (x1, y1, x2, y2), c in zip(xyxy, confs):
+        for i, ((x1, y1, x2, y2), c) in enumerate(zip(xyxy, confs)):
             x1 = max(0, int(round(x1)))
             y1 = max(0, int(round(y1)))
             x2 = min(w - 1, int(round(x2)))
             y2 = min(h - 1, int(round(y2)))
             if x2 <= x1 or y2 <= y1:
                 continue
-            out.append(Detection(bbox=(x1, y1, x2, y2), conf=float(c)))
+            kp = None
+            if kps_array is not None and i < len(kps_array):
+                kp = kps_array[i].astype(np.float32)  # (5, 2)
+                if np.any(kp[:, 0] <= 0) or np.any(kp[:, 1] <= 0):
+                    kp = None  # invalid landmarks
+            out.append(Detection(bbox=(x1, y1, x2, y2), conf=float(c), keypoints=kp))
         return out

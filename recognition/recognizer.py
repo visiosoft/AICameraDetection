@@ -38,8 +38,19 @@ class FaceRecognizer:
         self.app = FaceAnalysis(name="buffalo_s", providers=providers)
         self.app.prepare(ctx_id=0 if use_gpu else -1, det_size=det_size)
         self._use_gpu = use_gpu
+
+        # Cache recognition model for direct landmark-based embedding
+        self._rec_model = self.app.models.get('recognition')
+        self._norm_crop = None
+        if self._rec_model is not None:
+            try:
+                from insightface.utils.face_align import norm_crop
+                self._norm_crop = norm_crop
+            except ImportError:
+                self._rec_model = None
         logger.info(
-            "InsightFace loaded (model=buffalo_s, providers=%s)", providers
+            "InsightFace loaded (model=buffalo_s, providers=%s, direct_embed=%s)",
+            providers, self._rec_model is not None,
         )
 
     def embed_from_full_frame(self, frame: np.ndarray) -> Optional[np.ndarray]:
@@ -79,6 +90,24 @@ class FaceRecognizer:
         crop = frame[cy1:cy2, cx1:cx2]
         return self.embed_from_full_frame(crop)
 
+    def embed_aligned(
+        self,
+        frame: np.ndarray,
+        keypoints: np.ndarray,
+    ) -> Optional[np.ndarray]:
+        """Embed face using pre-detected landmarks, bypassing InsightFace's detector."""
+        if self._rec_model is None or self._norm_crop is None:
+            return None
+        if frame is None or frame.size == 0:
+            return None
+        try:
+            aligned = self._norm_crop(frame, keypoints, image_size=112)
+            feat = self._rec_model.get_feat(aligned).flatten()
+            return _l2_normalize(np.asarray(feat, dtype=np.float32))
+        except Exception:
+            logger.debug("embed_aligned failed, falling back", exc_info=True)
+            return None
+
     def match(
         self,
         embedding: np.ndarray,
@@ -109,4 +138,28 @@ class FaceRecognizer:
             best.score,
             best.employee_id,
         )
+        return None
+
+    def match_fast(
+        self,
+        embedding: np.ndarray,
+        emb_matrix: np.ndarray,
+        records: list,
+        threshold: float,
+    ) -> Optional[MatchResult]:
+        """Vectorized matching against a precomputed normalized embedding matrix."""
+        if embedding is None or emb_matrix.shape[0] == 0:
+            return None
+        e = _l2_normalize(np.asarray(embedding, dtype=np.float32))
+        scores = emb_matrix @ e
+        best_idx = int(np.argmax(scores))
+        best_score = float(scores[best_idx])
+        if best_score >= threshold:
+            rec = records[best_idx]
+            return MatchResult(
+                employee_id=rec.employee_id,
+                name=rec.name,
+                score=best_score,
+            )
+        logger.debug("No match (best similarity: %.2f)", best_score)
         return None

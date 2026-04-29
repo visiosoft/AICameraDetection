@@ -11,7 +11,7 @@ import sys
 import threading
 import time
 
-import config  # noqa: F401  (sets OPENCV_FFMPEG_CAPTURE_OPTIONS before cv2 import)
+import config  # noqa: F401
 from config import resolve_gpu, settings, setup_logging
 
 import cv2
@@ -92,6 +92,15 @@ def main() -> int:
     employees = db.list_all()
     logger.info("Loaded %d employees from database", len(employees))
 
+    # Precompute normalized embedding matrix for vectorized matching
+    if employees:
+        emb_matrix = np.stack(
+            [_l2_normalize(np.asarray(e.embedding, dtype=np.float32)) for e in employees],
+            axis=0,
+        )
+    else:
+        emb_matrix = np.empty((0, 512), dtype=np.float32)
+
     publisher = EventPublisher(
         webhook_url=settings.backend_webhook_url,
         api_key=settings.backend_api_key,
@@ -130,7 +139,7 @@ def main() -> int:
             fps_frames += 1
 
             # Heartbeat to show system is running
-            if frame_counter - last_heartbeat >= 100:
+            if frame_counter - last_heartbeat >= 500:
                 print(f"[Heartbeat] Processed {frame_counter} frames, system running...")
                 last_heartbeat = frame_counter
 
@@ -144,17 +153,17 @@ def main() -> int:
             detections = detector.detect(frame)
             tracks = tracker.update(detections)
 
-            # Show detection/tracking status
-            if len(detections) > 0:
-                print(f"[Frame {frame_counter}] Detected {len(detections)} face(s), tracking {len(tracks)}")
-
             recognized_this_frame = 0
             unknown_this_frame = 0
             for t in tracks:
                 if not tracker.needs_recognition(t):
                     continue
 
-                emb = recognizer.embed(frame, t.bbox)
+                emb = None
+                if t.keypoints is not None:
+                    emb = recognizer.embed_aligned(frame, t.keypoints)
+                if emb is None:
+                    emb = recognizer.embed(frame, t.bbox)
                 if emb is None:
                     continue
 
@@ -164,7 +173,6 @@ def main() -> int:
                     t.embedding_buffer.pop(0)
 
                 buffered = len(t.embedding_buffer)
-                print(f"  → Track {t.track_id}: buffering {buffered}/{BUFFER_SIZE}")
 
                 if buffered < BUFFER_SIZE:
                     continue  # wait for full buffer
@@ -174,14 +182,13 @@ def main() -> int:
                     np.mean(np.stack(t.embedding_buffer, axis=0), axis=0).astype(np.float32)
                 )
 
-                match = recognizer.match(
-                    avg_emb, employees, settings.recognition_threshold
+                match = recognizer.match_fast(
+                    avg_emb, emb_matrix, employees, settings.recognition_threshold
                 )
 
                 t.stable_recognized = True
                 if match is None:
                     unknown_this_frame += 1
-                    print(f"  ✗ Unknown person (no match after {BUFFER_SIZE}-frame average)")
                     continue
 
                 t.recognized_employee_id = match.employee_id
